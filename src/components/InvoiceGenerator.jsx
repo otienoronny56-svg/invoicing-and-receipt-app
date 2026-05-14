@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { format } from 'date-fns';
 import { Download, Plus, Trash2, Clock, FileText, Mail, MessageCircle, CheckCircle, Circle, Share2, Receipt, Calendar } from 'lucide-react';
@@ -44,9 +44,29 @@ const buildPDFBlob = (inv, company, isReceipt) => {
   if(company.email){doc.text('Email: '+company.email, infoX, ay);}
 
   // Document Type Header (Far Right)
-  doc.setFont('helvetica','bold'); doc.setFontSize(28); doc.setTextColor(a.r,a.g,a.b);
-  doc.text(isReceipt?'RECEIPT':'INVOICE', pageW-margin, margin+8, {align:'right'});
-  if(isReceipt){doc.setFontSize(12);doc.setTextColor(16,185,129);doc.text('PAID',pageW-margin,margin+18,{align:'right'});}
+  doc.setFont('helvetica','bold'); doc.setFontSize(26); doc.setTextColor(a.r,a.g,a.b);
+  const title = inv.documentTitle || (isReceipt ? 'RECEIPT' : 'INVOICE');
+  doc.text(title, pageW-margin, margin+8, {align:'right'});
+  
+  if (inv.documentSubtitle) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(100, 116, 139);
+    const subLines = doc.splitTextToSize(inv.documentSubtitle, 70);
+    doc.text(subLines, pageW-margin, margin+14, {align:'right'});
+  }
+
+  if(isReceipt){doc.setFontSize(12);doc.setTextColor(16,185,129);doc.text('PAID',pageW-margin,margin+(inv.documentSubtitle?22:18),{align:'right'});}
+
+  // --- BACKGROUND WATERMARK ---
+  if (isReceipt) {
+    doc.saveGraphicsState();
+    doc.setGState(new doc.GState({ opacity: 0.1 }));
+    doc.setFontSize(100);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(16, 185, 129);
+    // Center of page, rotated
+    doc.text('PAID', pageW / 2, 120, { align: 'center', angle: 330 }); 
+    doc.restoreGraphicsState();
+  }
 
   y += 32; // Standard space for header block
   doc.setDrawColor(203,213,225); doc.setLineWidth(0.4); doc.line(margin,y,pageW-margin,y); y+=8;
@@ -54,8 +74,9 @@ const buildPDFBlob = (inv, company, isReceipt) => {
   doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(100,116,139);doc.text('BILLED TO',margin,y);
   doc.setFontSize(10);doc.setFont('helvetica','bold');doc.setTextColor(15,23,42);doc.text(inv.clientName||'Client',margin,y+6);
   doc.setFontSize(8);doc.setFont('helvetica','normal');doc.setTextColor(71,85,105);
-  if(inv.clientAddress)doc.text(inv.clientAddress,margin,y+12);
-  if(inv.clientEmail)doc.text(inv.clientEmail,margin,y+17);
+  if(inv.clientAddress) { doc.text(inv.clientAddress,margin,y+12); }
+  if(inv.clientPhone) { doc.text('Phone: '+inv.clientPhone,margin,y+17); }
+  if(inv.clientEmail) { doc.text('Email: '+inv.clientEmail,margin,y+(inv.clientPhone?22:17)); }
   // META RIGHT
   const rx=pageW-margin; let my=y+6;
   [['Date:',inv.date||''],[isReceipt?'Receipt #:':'Invoice #:',docNum],[isReceipt?'Payment Date:':'Due Date:',inv.dueDate||'']].forEach(([l,v])=>{
@@ -140,11 +161,34 @@ export default function InvoiceGenerator({ company }) {
     date: format(new Date(), 'yyyy-MM-dd'),
     dueDate: format(new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'),
     clientName: '',
+    clientPhone: '',
     clientAddress: '',
     clientEmail: '',
-    items: [{ id: uuidv4(), description: '', quantity: 1, price: 0 }],
+    items: [{ id: uuidv4(), description: '', quantity: '', price: '' }],
     notes: 'Thank you for your business!',
+    documentTitle: 'INVOICE',
+    documentSubtitle: '',
   }));
+
+  const [focusedItemId, setFocusedItemId] = useState(null);
+  const [itemSearch, setItemSearch] = useState('');
+  
+  const itemSuggestions = useMemo(() => {
+    const suggestions = {};
+    // Process history from newest to oldest so we get the most recent prices
+    const sortedHistory = [...history].sort((a, b) => new Date(b.date) - new Date(a.date));
+    sortedHistory.forEach(inv => {
+      (inv.items || []).forEach(item => {
+        if (item.description && item.description.trim()) {
+          const desc = item.description.trim();
+          if (!suggestions[desc]) {
+            suggestions[desc] = item.price;
+          }
+        }
+      });
+    });
+    return suggestions;
+  }, [history]);
 
   const handleToggleStatus = (invoice) => {
     const newStatus = invoice.status === 'paid' ? 'unpaid' : 'paid';
@@ -178,13 +222,19 @@ export default function InvoiceGenerator({ company }) {
   }, [activeTab, isReceiptMode, invoiceData]);
 
   const handleViewOldInvoice = (inv) => {
-    setInvoiceData(inv);
+    setInvoiceData({
+      ...inv,
+      documentTitle: inv.documentTitle || 'INVOICE'
+    });
     setIsReceiptMode(false);
     setActiveTab('create');
   };
 
   const handleGenerateReceiptFromHistory = (inv) => {
-    setInvoiceData(inv);
+    setInvoiceData({
+      ...inv,
+      documentTitle: 'RECEIPT'
+    });
     setIsReceiptMode(true);
     setActiveTab('create');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -200,6 +250,8 @@ export default function InvoiceGenerator({ company }) {
       clientEmail: '',
       items: [{ id: uuidv4(), description: '', quantity: 1, price: 0 }],
       notes: 'Thank you for your business!',
+      documentTitle: 'INVOICE',
+      documentSubtitle: '',
     });
     setActiveTab('create');
   };
@@ -251,8 +303,8 @@ export default function InvoiceGenerator({ company }) {
       setInvoiceData(inv);
       setIsReceiptMode(isReceipt);
       
-      const docType = isReceipt ? 'Receipt' : 'Invoice';
-      const docNum = isReceipt ? (inv.invoiceNumber || '').replace('INV-', 'RCPT-') : (inv.invoiceNumber || '');
+      const docType = (inv.documentTitle || (isReceipt ? 'RECEIPT' : 'INVOICE')).replace(/\s+/g, '_');
+      const docNum = (isReceipt ? (inv.invoiceNumber || '').replace('INV-', 'RCPT-') : (inv.invoiceNumber || '')).replace(/\s+/g, '_');
       const fileName = `${docNum}_${docType}.pdf`;
 
       // Use pure jsPDF - no html2canvas, works on Android WebView 100%
@@ -316,13 +368,13 @@ export default function InvoiceGenerator({ company }) {
 
 
   const calculateSubtotal = () => {
-    return invoiceData.items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+    return invoiceData.items.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.price || 0)), 0);
   };
 
   const handleAddItem = () => {
     setInvoiceData({
       ...invoiceData,
-      items: [...invoiceData.items, { id: uuidv4(), description: '', quantity: 1, price: 0 }]
+      items: [...invoiceData.items, { id: uuidv4(), description: '', quantity: '', price: '' }]
     });
   };
 
@@ -334,12 +386,32 @@ export default function InvoiceGenerator({ company }) {
   };
 
   const handleItemChange = (id, field, value) => {
-    setInvoiceData({
-      ...invoiceData,
-      items: invoiceData.items.map(item => 
-        item.id === id ? { ...item, [field]: value } : item
-      )
+    if (field === 'description') {
+      setItemSearch(value);
+    }
+    setInvoiceData(prev => {
+      const newItems = prev.items.map(item => {
+        if (item.id === id) {
+          const updatedItem = { ...item, [field]: value };
+          
+          // Auto-fill price if description matches a suggestion and price is currently 0 or empty
+          if (field === 'description' && value) {
+            const trimmedVal = value.trim();
+            if (itemSuggestions[trimmedVal] !== undefined && (!item.price || item.price === 0)) {
+              updatedItem.price = itemSuggestions[trimmedVal];
+            }
+          }
+          return updatedItem;
+        }
+        return item;
+      });
+      return { ...prev, items: newItems };
     });
+  };
+
+  const selectSuggestion = (id, description) => {
+    handleItemChange(id, 'description', description);
+    setFocusedItemId(null);
   };
 
   const renderInvoiceSheet = (ref, currentScale = 1) => (
@@ -385,10 +457,29 @@ export default function InvoiceGenerator({ company }) {
             </div>
           </div>
         )}
-        <div className="text-right">
-          <h2 style={{ color: company.accentColor || '#1e293b', fontSize: '2.5rem', fontWeight: 700, margin: 0, letterSpacing: '0.05em' }}>
-            {isReceiptMode ? 'RECEIPT' : 'INVOICE'}
+        <div className="text-right" style={{ maxWidth: '45%' }}>
+          <h2 style={{ 
+            color: company.accentColor || '#1e293b', 
+            fontSize: (invoiceData.documentTitle || '').length > 15 ? '1.5rem' : '2.2rem', 
+            fontWeight: 700, 
+            margin: 0, 
+            letterSpacing: '0.05em',
+            lineHeight: '1'
+          }}>
+            {invoiceData.documentTitle || (isReceiptMode ? 'RECEIPT' : 'INVOICE')}
           </h2>
+          {invoiceData.documentSubtitle && (
+            <p style={{ 
+              fontSize: '0.85rem', 
+              color: '#64748b', 
+              margin: '0.25rem 0 0 0',
+              fontWeight: 500,
+              lineHeight: '1.4',
+              whiteSpace: 'pre-wrap'
+            }}>
+              {invoiceData.documentSubtitle}
+            </p>
+          )}
         </div>
       </div>
 
@@ -399,7 +490,8 @@ export default function InvoiceGenerator({ company }) {
           <h4 style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>Billed To</h4>
           <p style={{ fontWeight: 700, color: '#0f172a', fontSize: '1rem', margin: 0 }}>{invoiceData.clientName || 'Client Name'}</p>
           {invoiceData.clientAddress && <p style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem', color: '#475569', margin: '0.25rem 0 0 0' }}>{invoiceData.clientAddress}</p>}
-          {invoiceData.clientEmail && <p style={{ fontSize: '0.85rem', color: '#475569', margin: '0.25rem 0 0 0' }}>{invoiceData.clientEmail}</p>}
+          {invoiceData.clientPhone && <p style={{ fontSize: '0.85rem', color: '#475569', margin: '0.25rem 0 0 0' }}>Phone: {invoiceData.clientPhone}</p>}
+          {invoiceData.clientEmail && <p style={{ fontSize: '0.85rem', color: '#475569', margin: '0.25rem 0 0 0' }}>Email: {invoiceData.clientEmail}</p>}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '0.5rem 2rem', fontSize: '0.85rem', color: '#0f172a' }}>
           <span style={{ fontWeight: 600 }}>Date:</span>
@@ -695,11 +787,6 @@ export default function InvoiceGenerator({ company }) {
                           >
                             {inv.status === 'paid' ? <CheckCircle size={16} /> : <Circle size={16} />}
                           </button>
-                          
-                          <button className="btn btn-secondary" style={{ padding: '0.4rem 0.6rem', color: 'var(--accent)', background: 'rgba(59, 130, 246, 0.1)', borderColor: 'transparent' }} onClick={() => handleShareUniversal(inv)} title="Share">
-                            <Share2 size={16} />
-                          </button>
-                          
                           <button className="btn btn-secondary" style={{ padding: '0.4rem 1rem', fontSize: '0.85rem', fontWeight: 600 }} onClick={() => handleViewOldInvoice(inv)}>View / Edit</button>
                           
                           {inv.status === 'paid' && (
@@ -751,8 +838,8 @@ export default function InvoiceGenerator({ company }) {
                             {inv.status === 'paid' ? <CheckCircle size={20} /> : <Circle size={20} />}
                           </button>
                           
-                          <button className="btn btn-secondary" style={{ padding: '0.75rem', color: 'var(--accent)', background: 'rgba(59, 130, 246, 0.1)', borderColor: 'transparent', borderRadius: '12px' }} onClick={() => handleShareUniversal(inv)}>
-                            <Share2 size={20} />
+                          <button className="btn btn-danger" style={{ padding: '0.75rem', borderColor: 'transparent', borderRadius: '12px' }} onClick={() => handleDeleteOldInvoice(inv.id)} title="Delete Invoice">
+                            <Trash2 size={20} />
                           </button>
                           
                           <button className="btn btn-secondary" style={{ padding: '0.75rem 1.25rem', fontSize: '0.9rem', fontWeight: 700, borderRadius: '12px' }} onClick={() => handleViewOldInvoice(inv)}>View</button>
@@ -780,98 +867,182 @@ export default function InvoiceGenerator({ company }) {
   }
 
   return (
-    <div className="invoice-layout animate-fade-in">
-      {/* Editor Panel */}
-      <div className="glass-panel">
-        <div className="flex justify-between items-center mb-6">
-          <h3>Invoice Details</h3>
-          <button className="btn btn-secondary" onClick={() => setActiveTab('history')} style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>
-            <Clock size={16} /> History
-          </button>
-        </div>
-        
-        <div className="form-group">
-          <label>Client Name</label>
-          <input type="text" placeholder="Client Name or Company" value={invoiceData.clientName} onChange={e => setInvoiceData({...invoiceData, clientName: e.target.value})} />
-        </div>
-        
-        <div className="form-group">
-          <label>Client Email</label>
-          <input type="email" placeholder="client@example.com" value={invoiceData.clientEmail} onChange={e => setInvoiceData({...invoiceData, clientEmail: e.target.value})} />
-        </div>
-
-        <div className="form-group">
-          <label>Client Address</label>
-          <textarea rows="2" placeholder="Client Address" value={invoiceData.clientAddress} onChange={e => setInvoiceData({...invoiceData, clientAddress: e.target.value})}></textarea>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4 mt-6">
-          <div className="form-group">
-            <label>Invoice Number</label>
-            <input type="text" value={invoiceData.invoiceNumber} onChange={e => setInvoiceData({...invoiceData, invoiceNumber: e.target.value})} />
-          </div>
-          <div className="form-group">
-            <label>Invoice Date</label>
-            <input type="date" value={invoiceData.date} onChange={e => setInvoiceData({...invoiceData, date: e.target.value})} />
-          </div>
-        </div>
-
-        <div className="mt-8">
-          <div className="flex justify-between items-center mb-4">
-            <h4>Line Items</h4>
+    <>
+      <div className="invoice-layout animate-fade-in">
+        {/* Editor Panel */}
+        <div className="glass-panel">
+          <div className="flex justify-between items-center mb-6">
+            <h3>Invoice Details</h3>
+            <button className="btn btn-secondary" onClick={() => setActiveTab('history')} style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>
+              <Clock size={16} /> History
+            </button>
           </div>
           
-          <div className="flex-col gap-4">
-            {invoiceData.items.map((item, index) => (
-              <div key={item.id} className="flex gap-2 items-start p-4" style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-sm)' }}>
-                <div className="flex-col gap-2 flex" style={{ flex: 1 }}>
-                  <input type="text" placeholder="Description" value={item.description} onChange={e => handleItemChange(item.id, 'description', e.target.value)} />
-                  <div className="flex gap-2">
-                    <input type="number" min="1" placeholder="Qty" value={item.quantity} onChange={e => handleItemChange(item.id, 'quantity', Number(e.target.value))} style={{ width: '80px' }} />
-                    <input type="number" min="0" step="0.01" placeholder="Price" value={item.price} onChange={e => handleItemChange(item.id, 'price', Number(e.target.value))} style={{ flex: 1 }} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="form-group">
+              <label>Document Type</label>
+              <select 
+                value={invoiceData.documentTitle} 
+                onChange={e => {
+                  const val = e.target.value;
+                  setInvoiceData({...invoiceData, documentTitle: val});
+                  setIsReceiptMode(val === 'RECEIPT');
+                }}
+              >
+                <option value="INVOICE">INVOICE</option>
+                <option value="QUOTATION">QUOTATION</option>
+                <option value="RECEIPT">RECEIPT</option>
+                <option value="PROFORMA INVOICE">PROFORMA INVOICE</option>
+                <option value="DELIVERY NOTE">DELIVERY NOTE</option>
+                <option value="ESTIMATE">ESTIMATE</option>
+              </select>
+            </div>
+            
+            <div className="form-group">
+              <label>Subtitle / Description (Optional)</label>
+              <textarea 
+                rows="2"
+                placeholder="e.g. for pulling internet to your home" 
+                value={invoiceData.documentSubtitle} 
+                onChange={e => setInvoiceData({...invoiceData, documentSubtitle: e.target.value})} 
+                style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--panel-border)', background: 'rgba(0,0,0,0.2)', color: 'white', resize: 'vertical' }}
+              />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>Client Name</label>
+            <input type="text" placeholder="Client Name or Company" value={invoiceData.clientName} onChange={e => setInvoiceData({...invoiceData, clientName: e.target.value})} />
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4">
+            <div className="form-group">
+              <label>Client Email</label>
+              <input type="email" placeholder="client@example.com" value={invoiceData.clientEmail} onChange={e => setInvoiceData({...invoiceData, clientEmail: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label>Client Phone</label>
+              <input type="text" placeholder="+254..." value={invoiceData.clientPhone} onChange={e => setInvoiceData({...invoiceData, clientPhone: e.target.value})} />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>Client Address</label>
+            <textarea rows="2" placeholder="Client Address" value={invoiceData.clientAddress} onChange={e => setInvoiceData({...invoiceData, clientAddress: e.target.value})}></textarea>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 mt-6">
+            <div className="form-group">
+              <label>Invoice Number</label>
+              <input type="text" value={invoiceData.invoiceNumber} onChange={e => setInvoiceData({...invoiceData, invoiceNumber: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label>Invoice Date</label>
+              <input type="date" value={invoiceData.date} onChange={e => setInvoiceData({...invoiceData, date: e.target.value})} />
+            </div>
+          </div>
+
+          <div className="mt-8">
+            <div className="flex justify-between items-center mb-4">
+              <h4>Line Items</h4>
+            </div>
+            
+            <div className="flex-col gap-4">
+              {invoiceData.items.map((item, index) => (
+                <div key={item.id} className="flex gap-2 items-start p-4" style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-sm)', position: 'relative' }}>
+                  <div className="flex-col gap-2 flex" style={{ flex: 1 }}>
+                    <div style={{ position: 'relative' }}>
+                      <input 
+                        type="text" 
+                        placeholder="Description" 
+                        value={item.description} 
+                        onFocus={() => {
+                          setFocusedItemId(item.id);
+                          setItemSearch(item.description);
+                        }}
+                        onBlur={() => setTimeout(() => setFocusedItemId(null), 200)}
+                        onChange={e => handleItemChange(item.id, 'description', e.target.value)} 
+                      />
+                      {focusedItemId === item.id && (
+                        <div className="glass-panel" style={{
+                          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                          marginTop: '4px', padding: '0.5rem', maxHeight: '200px', overflowY: 'auto',
+                          border: '1px solid var(--panel-border)', boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
+                        }}>
+                          {Object.keys(itemSuggestions)
+                            .filter(desc => !itemSearch || desc.toLowerCase().includes(itemSearch.toLowerCase()))
+                            .slice(0, 6)
+                            .map(suggestion => (
+                              <div 
+                                key={suggestion} 
+                                onClick={() => selectSuggestion(item.id, suggestion)}
+                                style={{
+                                  padding: '0.75rem 1rem', cursor: 'pointer', borderRadius: '8px',
+                                  background: itemSearch?.trim() === suggestion ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
+                                  borderBottom: '1px solid rgba(255,255,255,0.05)'
+                                }}
+                                className="hover-bright"
+                              >
+                                <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{suggestion}</div>
+                                <div style={{ fontSize: '0.75rem', opacity: 0.6 }}>Ksh {itemSuggestions[suggestion]}</div>
+                              </div>
+                            ))}
+                          {Object.keys(itemSuggestions).filter(desc => !itemSearch || desc.toLowerCase().includes(itemSearch.toLowerCase())).length === 0 && (
+                            <div style={{ padding: '1rem', fontSize: '0.8rem', opacity: 0.5, textAlign: 'center' }}>No history found</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <input type="number" min="1" placeholder="Qty" value={item.quantity} onFocus={e => e.target.select()} onChange={e => handleItemChange(item.id, 'quantity', e.target.value)} style={{ width: '80px' }} />
+                      <input type="number" min="0" step="0.01" placeholder="Price" value={item.price} onFocus={e => e.target.select()} onChange={e => handleItemChange(item.id, 'price', e.target.value)} style={{ flex: 1 }} />
+                    </div>
                   </div>
+                  <button className="btn btn-danger" onClick={() => handleRemoveItem(item.id)} style={{ padding: '0.75rem' }} disabled={invoiceData.items.length === 1}>
+                    <Trash2 size={18} />
+                  </button>
                 </div>
-                <button className="btn btn-danger" onClick={() => handleRemoveItem(item.id)} style={{ padding: '0.75rem' }} disabled={invoiceData.items.length === 1}>
-                  <Trash2 size={18} />
-                </button>
-              </div>
-            ))}
+              ))}
+            </div>
+            
+            <button className="btn btn-secondary w-full mt-4" onClick={handleAddItem}>
+              <Plus size={18} /> Add Item
+            </button>
+          </div>
+
+          <div className="form-group mt-8">
+            <label>Notes / Terms</label>
+            <textarea rows="2" value={invoiceData.notes} onChange={e => setInvoiceData({...invoiceData, notes: e.target.value})}></textarea>
           </div>
           
-          <button className="btn btn-secondary w-full mt-4" onClick={handleAddItem}>
-            <Plus size={18} /> Add Item
-          </button>
+          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '2rem' }}>
+            <button className="btn btn-primary" onClick={handleGeneratePDF} style={{ flex: 2, padding: '1rem', fontSize: '1rem' }}>
+              {isReceiptMode ? <Receipt size={18} style={{ marginRight: '0.5rem' }} /> : <Download size={18} style={{ marginRight: '0.5rem' }} />}
+              {isReceiptMode ? 'Download Receipt' : 'Download Invoice'}
+            </button>
+            <button
+              className="btn btn-secondary"
+              style={{ flex: 1, padding: '1rem' }}
+              onClick={() => handleShareUniversal({ ...invoiceData, total: calculateSubtotal(), status: isReceiptMode ? 'paid' : 'unpaid' })}
+            >
+              <Share2 size={18} style={{ marginRight: '0.5rem' }} />
+              Share
+            </button>
+          </div>
+          {isReceiptMode && (
+            <button className="btn btn-secondary w-full mt-2" onClick={() => {
+              setIsReceiptMode(false);
+              setInvoiceData(prev => ({ ...prev, documentTitle: 'INVOICE' }));
+            }}>
+              Switch back to Invoice
+            </button>
+          )}
         </div>
 
-        <div className="form-group mt-8">
-          <label>Notes / Terms</label>
-          <textarea rows="2" value={invoiceData.notes} onChange={e => setInvoiceData({...invoiceData, notes: e.target.value})}></textarea>
+        {/* Preview Panel */}
+        <div className="invoice-preview-wrapper" ref={wrapperRef}>
+          {renderInvoiceSheet(previewRef, scale)}
         </div>
-        
-        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '2rem' }}>
-          <button className="btn btn-primary" onClick={handleGeneratePDF} style={{ flex: 2, padding: '1rem', fontSize: '1rem' }}>
-            {isReceiptMode ? <Receipt size={18} style={{ marginRight: '0.5rem' }} /> : <Download size={18} style={{ marginRight: '0.5rem' }} />}
-            {isReceiptMode ? 'Download Receipt' : 'Download Invoice'}
-          </button>
-          <button
-            className="btn btn-secondary"
-            style={{ flex: 1, padding: '1rem' }}
-            onClick={() => handleShareUniversal({ ...invoiceData, total: calculateSubtotal(), status: isReceiptMode ? 'paid' : 'unpaid' })}
-          >
-            <Share2 size={18} style={{ marginRight: '0.5rem' }} />
-            Share
-          </button>
-        </div>
-        {isReceiptMode && (
-          <button className="btn btn-secondary w-full mt-2" onClick={() => setIsReceiptMode(false)}>
-            Switch back to Invoice
-          </button>
-        )}
-      </div>
-
-      {/* Preview Panel */}
-      <div className="invoice-preview-wrapper" ref={wrapperRef}>
-        {renderInvoiceSheet(previewRef, scale)}
       </div>
 
       {/* Hidden PDF Capture - must be at 0,0 so Android WebView can render it */}
@@ -947,6 +1118,8 @@ export default function InvoiceGenerator({ company }) {
           <p style={{ fontSize: '0.9rem', opacity: 0.7 }}>This will only take a moment</p>
         </div>
       )}
-    </div>
+
+      {/* Item Suggestions - Removed native datalist */}
+    </>
   );
 }
