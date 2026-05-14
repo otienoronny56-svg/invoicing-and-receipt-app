@@ -41,7 +41,7 @@ const buildPDFBlob = (inv, company, isReceipt) => {
   if(inv.clientEmail)doc.text(inv.clientEmail,margin,y+17);
   // META RIGHT
   const rx=pageW-margin; let my=y+6;
-  [['Date:',inv.date||''],[isReceipt?'Receipt #:':'Invoice #:',docNum],['Due Date:',inv.dueDate||'']].forEach(([l,v])=>{
+  [['Date:',inv.date||''],[isReceipt?'Receipt #:':'Invoice #:',docNum],[isReceipt?'Payment Date:':'Due Date:',inv.dueDate||'']].forEach(([l,v])=>{
     doc.setFont('helvetica','bold');doc.setTextColor(15,23,42);doc.setFontSize(8);doc.text(l,rx-38,my);
     doc.setFont('helvetica','normal');doc.text(v,rx,my,{align:'right'});my+=6;
   });
@@ -70,7 +70,7 @@ const buildPDFBlob = (inv, company, isReceipt) => {
   const tx=pageW-margin-60;
   doc.setDrawColor(a.r,a.g,a.b);doc.setLineWidth(0.5);doc.line(tx,y,pageW-margin,y);y+=5;
   doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(a.r,a.g,a.b);
-  doc.text('Total Due:',tx,y+5);doc.text('Ksh '+total.toFixed(2),pageW-margin,y+5,{align:'right'});
+  doc.text(isReceipt ? 'Total Paid:' : 'Total Due:',tx,y+5);doc.text('Ksh '+total.toFixed(2),pageW-margin,y+5,{align:'right'});
   doc.line(tx,y+8,pageW-margin,y+8);y+=18;
   // PAYMENT DETAILS
   if(company.paymentDetails){
@@ -408,7 +408,7 @@ export default function InvoiceGenerator({ company }) {
           <span>Ksh {subtotal.toFixed(2)}</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1rem', fontSize: '1rem', fontWeight: 700, color: company.accentColor || '#1e293b', borderTop: `2px solid ${company.accentColor || '#1e293b'}`, borderBottom: `2px solid ${company.accentColor || '#1e293b'}`, marginTop: '0.5rem' }}>
-          <div className="flex-col"><span>Total</span><span>Due:</span></div>
+          <div className="flex-col"><span>{isReceiptMode ? 'Total' : 'Total'}</span><span>{isReceiptMode ? 'Paid:' : 'Due:'}</span></div>
           <div className="flex-col" style={{ textAlign: 'right' }}><span>Ksh</span><span>{subtotal.toFixed(2)}</span></div>
         </div>
       </div>
