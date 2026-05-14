@@ -759,8 +759,8 @@ export default function InvoiceGenerator({ company }) {
         {renderInvoiceSheet(previewRef, scale)}
       </div>
 
-      {/* Hidden PDF Capture (Always scale 1 for perfect PDF) */}
-      <div style={{ position: 'fixed', top: '-10000px', left: '-10000px', width: '794px' }}>
+      {/* Hidden PDF Capture - must be at 0,0 so Android WebView can render it */}
+      <div style={{ position: 'fixed', top: 0, left: 0, width: '794px', opacity: 0, pointerEvents: 'none', zIndex: -1, overflow: 'hidden' }}>
         {renderInvoiceSheet(pdfRef, 1)}
       </div>
 
