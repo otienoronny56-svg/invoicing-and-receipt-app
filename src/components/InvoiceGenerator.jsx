@@ -126,74 +126,94 @@ export default function InvoiceGenerator({ company }) {
 
   const handleShareUniversal = async (inv) => {
     setIsGenerating(true);
+    
+    // Sync the hidden capture sheet to the correct invoice
     setInvoiceData(inv);
     setIsReceiptMode(inv.status === 'paid');
     
-    setTimeout(async () => {
-      const element = pdfRef.current;
-      const fileName = `${inv.invoiceNumber}_${inv.status === 'paid' ? 'Receipt' : 'Invoice'}.pdf`;
-      const opt = {
-        margin: 0,
-        filename: fileName,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-      };
+    // Wait for React to re-render the hidden sheet with the new invoice data
+    await new Promise(resolve => setTimeout(resolve, 600));
+    
+    const element = pdfRef.current;
+    const docType = inv.status === 'paid' ? 'Receipt' : 'Invoice';
+    const fileName = `${inv.invoiceNumber}_${docType}.pdf`;
 
-      try {
-        const pdfBlob = await html2pdf().set(opt).from(element).output('blob');
+    const opt = {
+      margin: 0,
+      filename: fileName,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
 
-        // NATIVE APK SHARING
-        if (Capacitor.isNativePlatform()) {
-          const reader = new FileReader();
-          reader.readAsDataURL(pdfBlob);
-          reader.onloadend = async () => {
-            try {
-              const base64data = reader.result.split(',')[1];
-              const fileResult = await Filesystem.writeFile({
-                path: fileName,
-                data: base64data,
-                directory: Directory.Cache
-              });
-              await Share.share({
-                title: fileName,
-                text: `Hello ${inv.clientName || ''}, please find your document attached.`,
-                url: fileResult.uri,
-              });
-              setIsGenerating(false);
-            } catch (e) {
-              console.error('Native share error', e);
-              setIsGenerating(false);
-              handleShareWhatsApp(inv);
-            }
-          };
-          return;
-        }
+    try {
+      // STEP 1: Generate the PDF as a blob (works everywhere)
+      const pdfBlob = await html2pdf().set(opt).from(element).output('blob');
+      setIsGenerating(false);
 
-        // WEB SHARING
-        const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
-        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            files: [file],
-            title: fileName,
-            text: `Hello ${inv.clientName || ''}, please find your document attached.`,
-          });
-          setIsGenerating(false);
-        } else {
-          setIsGenerating(false);
-          // Alert the user why it's not a file
-          alert("Your browser doesn't support direct file sharing. Sending the details via WhatsApp instead.");
-          handleShareWhatsApp(inv);
-        }
-      } catch (err) {
-        setIsGenerating(false);
-        if (err.name !== 'AbortError') {
-          console.error('Sharing failed:', err);
-          handleShareWhatsApp(inv);
-        }
+      // STEP 2: Try native APK sharing first (Capacitor)
+      if (Capacitor.isNativePlatform()) {
+        const reader = new FileReader();
+        reader.readAsDataURL(pdfBlob);
+        reader.onloadend = async () => {
+          try {
+            const base64data = reader.result.split(',')[1];
+            const fileResult = await Filesystem.writeFile({
+              path: fileName,
+              data: base64data,
+              directory: Directory.Cache
+            });
+            await Share.share({
+              title: fileName,
+              text: `Hello ${inv.clientName || ''}, please find your ${docType} attached.`,
+              url: fileResult.uri,
+            });
+          } catch (e) {
+            console.error('Native share error', e);
+            // On APK fallback: force download
+            const url = URL.createObjectURL(pdfBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            a.click();
+            URL.revokeObjectURL(url);
+          }
+        };
+        return;
       }
-    }, 500); // Increased timeout for stability
+
+      // STEP 3: Try Web Share API with file (works on mobile browsers over HTTPS)
+      const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: fileName,
+          text: `Hello ${inv.clientName || ''}, please find your ${docType} attached.`,
+        });
+        return;
+      }
+
+      // STEP 4: Final fallback — FORCE DOWNLOAD the PDF so they always have the file
+      const blobUrl = URL.createObjectURL(pdfBlob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+      
+      alert(`✅ "${fileName}" has been downloaded!\n\nYou can now manually attach it when sharing via WhatsApp, Email or any other app.`);
+
+    } catch (err) {
+      setIsGenerating(false);
+      if (err.name !== 'AbortError') {
+        console.error('PDF Share failed:', err);
+        alert('Could not generate the PDF. Please try again.');
+      }
+    }
   };
+
 
   const calculateSubtotal = () => {
     return invoiceData.items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
