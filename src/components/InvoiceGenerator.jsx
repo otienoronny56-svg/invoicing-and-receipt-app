@@ -29,6 +29,7 @@ export default function InvoiceGenerator({ company }) {
   const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'paid', 'unpaid'
   const [summaryPeriod, setSummaryPeriod] = useState('all'); // 'all', 'week', 'month', 'year'
   const [isReceiptMode, setIsReceiptMode] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [scale, setScale] = useState(1);
   const wrapperRef = useRef(null);
   const previewRef = useRef(null);
@@ -124,6 +125,7 @@ export default function InvoiceGenerator({ company }) {
   };
 
   const handleShareUniversal = async (inv) => {
+    setIsGenerating(true);
     setInvoiceData(inv);
     setIsReceiptMode(inv.status === 'paid');
     
@@ -134,33 +136,36 @@ export default function InvoiceGenerator({ company }) {
         margin: 0,
         filename: fileName,
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true },
+        html2canvas: { scale: 2, useCORS: true, logging: false },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
       };
 
       try {
         const pdfBlob = await html2pdf().set(opt).from(element).output('blob');
 
-        // NATIVE APK SHARING (Capacitor)
+        // NATIVE APK SHARING
         if (Capacitor.isNativePlatform()) {
           const reader = new FileReader();
           reader.readAsDataURL(pdfBlob);
           reader.onloadend = async () => {
-            const base64data = reader.result.split(',')[1];
-            
-            // Save to temp file
-            const fileResult = await Filesystem.writeFile({
-              path: fileName,
-              data: base64data,
-              directory: Directory.Cache
-            });
-
-            // Share the native file
-            await Share.share({
-              title: fileName,
-              text: `Hello ${inv.clientName || ''}, please find your document attached.`,
-              url: fileResult.uri,
-            });
+            try {
+              const base64data = reader.result.split(',')[1];
+              const fileResult = await Filesystem.writeFile({
+                path: fileName,
+                data: base64data,
+                directory: Directory.Cache
+              });
+              await Share.share({
+                title: fileName,
+                text: `Hello ${inv.clientName || ''}, please find your document attached.`,
+                url: fileResult.uri,
+              });
+              setIsGenerating(false);
+            } catch (e) {
+              console.error('Native share error', e);
+              setIsGenerating(false);
+              handleShareWhatsApp(inv);
+            }
           };
           return;
         }
@@ -173,16 +178,21 @@ export default function InvoiceGenerator({ company }) {
             title: fileName,
             text: `Hello ${inv.clientName || ''}, please find your document attached.`,
           });
+          setIsGenerating(false);
         } else {
+          setIsGenerating(false);
+          // Alert the user why it's not a file
+          alert("Your browser doesn't support direct file sharing. Sending the details via WhatsApp instead.");
           handleShareWhatsApp(inv);
         }
       } catch (err) {
+        setIsGenerating(false);
         if (err.name !== 'AbortError') {
           console.error('Sharing failed:', err);
           handleShareWhatsApp(inv);
         }
       }
-    }, 100);
+    }, 500); // Increased timeout for stability
   };
 
   const calculateSubtotal = () => {
@@ -331,7 +341,8 @@ export default function InvoiceGenerator({ company }) {
   );
 
   const handleGeneratePDF = async () => {
-    const element = pdfRef.current; // USE THE HIDDEN FULL-SIZE SHEET
+    setIsGenerating(true);
+    const element = pdfRef.current;
     
     // Save to history first
     const isNew = !history.find(inv => inv.id === invoiceData.id);
@@ -352,11 +363,19 @@ export default function InvoiceGenerator({ company }) {
       margin: 0,
       filename: `${invoiceData.invoiceNumber}_${isReceiptMode ? 'Receipt' : 'Invoice'}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
     };
 
-    html2pdf().set(opt).from(element).save();
+    try {
+      await html2pdf().set(opt).from(element).save();
+      setIsGenerating(false);
+      alert('PDF saved successfully to your downloads!');
+    } catch (err) {
+      console.error('PDF Generation failed', err);
+      setIsGenerating(false);
+      alert('Failed to generate PDF. Please try again.');
+    }
   };
 
   const subtotal = calculateSubtotal();
@@ -724,6 +743,19 @@ export default function InvoiceGenerator({ company }) {
       <div style={{ position: 'fixed', top: '-10000px', left: '-10000px', width: '794px' }}>
         {renderInvoiceSheet(pdfRef, 1)}
       </div>
+
+      {/* Loading Overlay */}
+      {isGenerating && (
+        <div style={{ 
+          position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', 
+          backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 9999, display: 'flex', 
+          flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'white' 
+        }}>
+          <div className="animate-spin mb-4" style={{ width: '40px', height: '40px', border: '4px solid #3b82f6', borderTopColor: 'transparent', borderRadius: '50%' }}></div>
+          <p style={{ fontSize: '1.2rem', fontWeight: 600 }}>Generating PDF...</p>
+          <p style={{ fontSize: '0.9rem', opacity: 0.7 }}>This will only take a moment</p>
+        </div>
+      )}
     </div>
   );
 }
