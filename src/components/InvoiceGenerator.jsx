@@ -20,7 +20,17 @@ const buildPDFBlob = (inv, company, isReceipt) => {
   const a = hexToRgb(company.accentColor);
   const docNum = isReceipt ? (inv.invoiceNumber||'').replace('INV-','RCPT-') : (inv.invoiceNumber||'');
   let y = margin;
-  // HEADER
+  // --- LOGO & HEADER ---
+  if (company.logo) {
+    try {
+      // Add logo (approx 20mm height)
+      doc.addImage(company.logo, 'PNG', margin, y, 20, 20);
+      y += 24; // Space for logo
+    } catch (e) {
+      console.error('PDF Logo failed:', e);
+    }
+  }
+
   doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.setTextColor(a.r,a.g,a.b);
   doc.text(company.name||'Company', margin, y+8);
   doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(71,85,105);
@@ -28,10 +38,13 @@ const buildPDFBlob = (inv, company, isReceipt) => {
   if(company.address){doc.text(company.address,margin,ay);ay+=4.5;}
   if(company.phone){doc.text('Phone: '+company.phone,margin,ay);ay+=4.5;}
   if(company.email){doc.text('Email: '+company.email,margin,ay);}
+
+  // Document Type Header (Aligned to right of the logo/name block)
   doc.setFont('helvetica','bold'); doc.setFontSize(24); doc.setTextColor(a.r,a.g,a.b);
-  doc.text(isReceipt?'RECEIPT':'INVOICE', pageW-margin, y+8, {align:'right'});
-  if(isReceipt){doc.setFontSize(11);doc.setTextColor(16,185,129);doc.text('PAID',pageW-margin,y+18,{align:'right'});}
-  y+=36;
+  doc.text(isReceipt?'RECEIPT':'INVOICE', pageW-margin, margin+8, {align:'right'});
+  if(isReceipt){doc.setFontSize(11);doc.setTextColor(16,185,129);doc.text('PAID',pageW-margin,margin+18,{align:'right'});}
+
+  y += 30; // Move y to start of body section
   doc.setDrawColor(203,213,225); doc.setLineWidth(0.4); doc.line(margin,y,pageW-margin,y); y+=8;
   // BILLED TO
   doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(100,116,139);doc.text('BILLED TO',margin,y);
