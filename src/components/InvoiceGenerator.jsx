@@ -3,10 +3,91 @@ import { v4 as uuidv4 } from 'uuid';
 import { format } from 'date-fns';
 import { Download, Plus, Trash2, Clock, FileText, Mail, MessageCircle, CheckCircle, Circle, Share2, Receipt, Calendar } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
+import jsPDF from 'jspdf';
 import { saveInvoice, getInvoices, deleteInvoice } from '../utils/storage';
 import { Share } from '@capacitor/share';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
+
+// Pure programmatic PDF — no html2canvas, works on Android WebView 100%
+const buildPDFBlob = (inv, company, isReceipt) => {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const pageW = 210, margin = 15, contentW = 210 - 2 * 15;
+  const hexToRgb = (hex) => {
+    const r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '#1e293b');
+    return r ? { r: parseInt(r[1],16), g: parseInt(r[2],16), b: parseInt(r[3],16) } : { r:30, g:41, b:59 };
+  };
+  const a = hexToRgb(company.accentColor);
+  const docNum = isReceipt ? (inv.invoiceNumber||'').replace('INV-','RCPT-') : (inv.invoiceNumber||'');
+  let y = margin;
+  // HEADER
+  doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.setTextColor(a.r,a.g,a.b);
+  doc.text(company.name||'Company', margin, y+8);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(71,85,105);
+  let ay = y+14;
+  if(company.address){doc.text(company.address,margin,ay);ay+=4.5;}
+  if(company.phone){doc.text('Phone: '+company.phone,margin,ay);ay+=4.5;}
+  if(company.email){doc.text('Email: '+company.email,margin,ay);}
+  doc.setFont('helvetica','bold'); doc.setFontSize(24); doc.setTextColor(a.r,a.g,a.b);
+  doc.text(isReceipt?'RECEIPT':'INVOICE', pageW-margin, y+8, {align:'right'});
+  if(isReceipt){doc.setFontSize(11);doc.setTextColor(16,185,129);doc.text('PAID',pageW-margin,y+18,{align:'right'});}
+  y+=36;
+  doc.setDrawColor(203,213,225); doc.setLineWidth(0.4); doc.line(margin,y,pageW-margin,y); y+=8;
+  // BILLED TO
+  doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(100,116,139);doc.text('BILLED TO',margin,y);
+  doc.setFontSize(10);doc.setFont('helvetica','bold');doc.setTextColor(15,23,42);doc.text(inv.clientName||'Client',margin,y+6);
+  doc.setFontSize(8);doc.setFont('helvetica','normal');doc.setTextColor(71,85,105);
+  if(inv.clientAddress)doc.text(inv.clientAddress,margin,y+12);
+  if(inv.clientEmail)doc.text(inv.clientEmail,margin,y+17);
+  // META RIGHT
+  const rx=pageW-margin; let my=y+6;
+  [['Date:',inv.date||''],[isReceipt?'Receipt #:':'Invoice #:',docNum],['Due Date:',inv.dueDate||'']].forEach(([l,v])=>{
+    doc.setFont('helvetica','bold');doc.setTextColor(15,23,42);doc.setFontSize(8);doc.text(l,rx-38,my);
+    doc.setFont('helvetica','normal');doc.text(v,rx,my,{align:'right'});my+=6;
+  });
+  y+=30;
+  // TABLE HEADER
+  doc.setFillColor(a.r,a.g,a.b);doc.rect(margin,y,contentW,8,'F');
+  doc.setFontSize(8);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+  const C={d:margin+3,q:margin+contentW*0.62,p:margin+contentW*0.78,t:margin+contentW};
+  doc.text('Description',C.d,y+5.5);doc.text('Qty',C.q,y+5.5,{align:'right'});
+  doc.text('Price',C.p,y+5.5,{align:'right'});doc.text('Amount',C.t,y+5.5,{align:'right'});
+  y+=8;
+  // TABLE ROWS
+  (inv.items||[]).forEach((item,i)=>{
+    if(i%2===0){doc.setFillColor(248,250,252);doc.rect(margin,y,contentW,9,'F');}
+    doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(51,65,85);
+    const amt=(Number(item.quantity||0)*Number(item.price||0)).toFixed(2);
+    doc.text(item.description||'',C.d,y+6);
+    doc.text(String(item.quantity||0),C.q,y+6,{align:'right'});
+    doc.text('Ksh '+Number(item.price||0).toFixed(2),C.p,y+6,{align:'right'});
+    doc.text('Ksh '+amt,C.t,y+6,{align:'right'});
+    y+=9;
+  });
+  y+=4;
+  // TOTAL
+  const total=(inv.items||[]).reduce((s,i)=>s+Number(i.quantity||0)*Number(i.price||0),0);
+  const tx=pageW-margin-60;
+  doc.setDrawColor(a.r,a.g,a.b);doc.setLineWidth(0.5);doc.line(tx,y,pageW-margin,y);y+=5;
+  doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(a.r,a.g,a.b);
+  doc.text('Total Due:',tx,y+5);doc.text('Ksh '+total.toFixed(2),pageW-margin,y+5,{align:'right'});
+  doc.line(tx,y+8,pageW-margin,y+8);y+=18;
+  // PAYMENT DETAILS
+  if(company.paymentDetails){
+    doc.setDrawColor(a.r,a.g,a.b);doc.setLineWidth(1);doc.line(margin,y,margin,y+22);doc.setLineWidth(0.1);
+    doc.setFont('helvetica','bold');doc.setFontSize(7.5);doc.setTextColor(a.r,a.g,a.b);doc.text('PAYMENT DETAILS',margin+4,y+5);
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(71,85,105);
+    const lines=doc.splitTextToSize(company.paymentDetails,contentW*0.65);
+    doc.text(lines,margin+4,y+10);y+=lines.length*4.5+14;
+  }
+  // NOTES
+  if(inv.notes){
+    doc.setDrawColor(226,232,240);doc.setLineWidth(0.3);doc.line(margin,y,pageW-margin,y);y+=5;
+    doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(100,116,139);
+    doc.text(inv.notes,pageW/2,y,{align:'center'});
+  }
+  return doc.output('blob');
+};
 
 const generateNextInvoiceNumber = (historyList) => {
   if (!historyList || historyList.length === 0) return 'INV-0001';
@@ -127,31 +208,19 @@ export default function InvoiceGenerator({ company }) {
   const handleShareUniversal = async (inv) => {
     setIsGenerating(true);
     
-    // Sync the hidden capture sheet to the correct invoice
+    // Sync state to match the invoice being shared
     setInvoiceData(inv);
     setIsReceiptMode(inv.status === 'paid');
     
-    // Wait for React to re-render the hidden sheet with the new invoice data
-    await new Promise(resolve => setTimeout(resolve, 600));
-    
-    const element = pdfRef.current;
     const docType = inv.status === 'paid' ? 'Receipt' : 'Invoice';
     const fileName = `${inv.invoiceNumber}_${docType}.pdf`;
 
-    const opt = {
-      margin: 0,
-      filename: fileName,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, logging: false },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-
     try {
-      // STEP 1: Generate the PDF as a blob (works everywhere)
-      const pdfBlob = await html2pdf().set(opt).from(element).output('blob');
+      // Use pure jsPDF - no html2canvas, works on Android WebView 100%
+      const pdfBlob = buildPDFBlob(inv, company, inv.status === 'paid');
       setIsGenerating(false);
 
-      // STEP 2: Try native APK sharing first (Capacitor)
+      // NATIVE APK SHARING (Capacitor)
       if (Capacitor.isNativePlatform()) {
         const reader = new FileReader();
         reader.readAsDataURL(pdfBlob);
@@ -170,46 +239,35 @@ export default function InvoiceGenerator({ company }) {
             });
           } catch (e) {
             console.error('Native share error', e);
-            // On APK fallback: force download
             const url = URL.createObjectURL(pdfBlob);
             const a = document.createElement('a');
-            a.href = url;
-            a.download = fileName;
-            a.click();
+            a.href = url; a.download = fileName; a.click();
             URL.revokeObjectURL(url);
           }
         };
         return;
       }
 
-      // STEP 3: Try Web Share API with file (works on mobile browsers over HTTPS)
+      // WEB: Try Web Share API with file attachment
       const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: fileName,
-          text: `Hello ${inv.clientName || ''}, please find your ${docType} attached.`,
-        });
+        await navigator.share({ files: [file], title: fileName, text: `Hello ${inv.clientName || ''}, please find your ${docType} attached.` });
         return;
       }
 
-      // STEP 4: Final fallback — FORCE DOWNLOAD the PDF so they always have the file
+      // FALLBACK: Force download (desktop Chrome on HTTP)
       const blobUrl = URL.createObjectURL(pdfBlob);
       const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(blobUrl);
-      
-      alert(`✅ "${fileName}" has been downloaded!\n\nYou can now manually attach it when sharing via WhatsApp, Email or any other app.`);
+      link.href = blobUrl; link.download = fileName;
+      document.body.appendChild(link); link.click();
+      document.body.removeChild(link); URL.revokeObjectURL(blobUrl);
+      alert(`✅ "${fileName}" has been downloaded!\n\nAttach it manually when you share via WhatsApp or Email.`);
 
     } catch (err) {
       setIsGenerating(false);
       if (err.name !== 'AbortError') {
         console.error('PDF Share failed:', err);
-        alert('Could not generate the PDF. Please try again.');
+        alert('Could not generate the PDF: ' + err.message);
       }
     }
   };
@@ -362,7 +420,6 @@ export default function InvoiceGenerator({ company }) {
 
   const handleGeneratePDF = async () => {
     setIsGenerating(true);
-    const element = pdfRef.current;
     
     // Save to history first
     const isNew = !history.find(inv => inv.id === invoiceData.id);
@@ -379,24 +436,30 @@ export default function InvoiceGenerator({ company }) {
       setHistory(updatedHistory.filter(i => i.companyId === company.id));
     }
 
-    const opt = {
-      margin: 0,
-      filename: `${invoiceData.invoiceNumber}_${isReceiptMode ? 'Receipt' : 'Invoice'}.pdf`,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, logging: false },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
+    const fileName = `${invoiceData.invoiceNumber}_${isReceiptMode ? 'Receipt' : 'Invoice'}.pdf`;
 
     try {
-      await html2pdf().set(opt).from(element).save();
+      // Use pure jsPDF — no html2canvas needed
+      const pdfBlob = buildPDFBlob(invoiceData, company, isReceiptMode);
       setIsGenerating(false);
-      alert('PDF saved successfully to your downloads!');
+
+      // Trigger download
+      const url = URL.createObjectURL(pdfBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      alert(`✅ "${fileName}" saved to your downloads!`);
     } catch (err) {
-      console.error('PDF Generation failed', err);
+      console.error('PDF Generation failed:', err);
       setIsGenerating(false);
-      alert('Failed to generate PDF. Please try again.');
+      alert('Failed to generate PDF: ' + err.message);
     }
   };
+
 
   const subtotal = calculateSubtotal();
 
