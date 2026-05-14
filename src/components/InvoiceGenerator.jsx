@@ -4,6 +4,9 @@ import { format } from 'date-fns';
 import { Download, Plus, Trash2, Clock, FileText, Mail, MessageCircle, CheckCircle, Circle, Share2, Receipt, Calendar } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { saveInvoice, getInvoices, deleteInvoice } from '../utils/storage';
+import { Share } from '@capacitor/share';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Capacitor } from '@capacitor/core';
 
 const generateNextInvoiceNumber = (historyList) => {
   if (!historyList || historyList.length === 0) return 'INV-0001';
@@ -121,20 +124,65 @@ export default function InvoiceGenerator({ company }) {
   };
 
   const handleShareUniversal = async (inv) => {
-    const text = `Hello ${inv.clientName || ''}, here are the details for Invoice ${inv.invoiceNumber}:\n\nTotal Due: Ksh ${inv.total.toFixed(2)}\nDue Date: ${inv.dueDate}\n\nThank you for your business!`;
+    setInvoiceData(inv);
+    setIsReceiptMode(inv.status === 'paid');
     
-    if (navigator.share) {
+    setTimeout(async () => {
+      const element = pdfRef.current;
+      const fileName = `${inv.invoiceNumber}_${inv.status === 'paid' ? 'Receipt' : 'Invoice'}.pdf`;
+      const opt = {
+        margin: 0,
+        filename: fileName,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
       try {
-        await navigator.share({
-          title: `Invoice ${inv.invoiceNumber}`,
-          text: text,
-        });
+        const pdfBlob = await html2pdf().set(opt).from(element).output('blob');
+
+        // NATIVE APK SHARING (Capacitor)
+        if (Capacitor.isNativePlatform()) {
+          const reader = new FileReader();
+          reader.readAsDataURL(pdfBlob);
+          reader.onloadend = async () => {
+            const base64data = reader.result.split(',')[1];
+            
+            // Save to temp file
+            const fileResult = await Filesystem.writeFile({
+              path: fileName,
+              data: base64data,
+              directory: Directory.Cache
+            });
+
+            // Share the native file
+            await Share.share({
+              title: fileName,
+              text: `Hello ${inv.clientName || ''}, please find your document attached.`,
+              url: fileResult.uri,
+            });
+          };
+          return;
+        }
+
+        // WEB SHARING
+        const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: fileName,
+            text: `Hello ${inv.clientName || ''}, please find your document attached.`,
+          });
+        } else {
+          handleShareWhatsApp(inv);
+        }
       } catch (err) {
-        if (err.name !== 'AbortError') handleShareWhatsApp(inv);
+        if (err.name !== 'AbortError') {
+          console.error('Sharing failed:', err);
+          handleShareWhatsApp(inv);
+        }
       }
-    } else {
-      handleShareWhatsApp(inv);
-    }
+    }, 100);
   };
 
   const calculateSubtotal = () => {

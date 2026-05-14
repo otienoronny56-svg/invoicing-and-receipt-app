@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ProInvoice</string>
+    <string name="title_activity_main">ProInvoice</string>
+    <string name="package_name">com.systemsbyronny.proinvoice</string>
+    <string name="custom_url_scheme">com.systemsbyronny.proinvoice</string>
+</resources>
