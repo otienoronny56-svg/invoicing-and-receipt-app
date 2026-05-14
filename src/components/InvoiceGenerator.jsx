@@ -208,30 +208,42 @@ export default function InvoiceGenerator({ company }) {
   };
 
   const handleShareUniversal = (inv) => {
-    const docType = inv.status === 'paid' ? 'Receipt' : 'Invoice';
-    const defaultMsg = `Hello ${inv.clientName || 'there'},\n\nPlease find your ${docType} (${inv.invoiceNumber}) attached.\n\nAmount: Ksh ${(inv.total || 0).toFixed(2)}\nDue Date: ${inv.dueDate || ''}\n\nThank you for your business!\n\n— ${company.name}`;
-    setShareMessage(defaultMsg);
-    setShareModal(inv);
+    try {
+      const isReceipt = inv.status === 'paid';
+      const docType = isReceipt ? 'Receipt' : 'Invoice';
+      const docNum = isReceipt ? (inv.invoiceNumber || '').replace('INV-', 'RCPT-') : (inv.invoiceNumber || '');
+      const dateLabel = isReceipt ? 'Payment Date' : 'Due Date';
+      
+      const defaultMsg = `Hello ${inv.clientName || 'there'},\n\nPlease find your ${docType} (${docNum}) attached.\n\nAmount: Ksh ${(inv.total || 0).toFixed(2)}\n${dateLabel}: ${inv.dueDate || ''}\n\nThank you for your business!\n\n— ${company.name}`;
+      
+      setShareMessage(defaultMsg);
+      setShareModal(inv);
+    } catch (err) {
+      console.error('Share modal trigger failed:', err);
+      alert('Error opening share menu. Please try again.');
+    }
   };
 
   const executeShare = async (inv) => {
-    setShareModal(null);
-    setIsGenerating(true);
-    
-    // Sync state to match the invoice being shared
-    setInvoiceData(inv);
-    setIsReceiptMode(inv.status === 'paid');
-    
-    const docType = inv.status === 'paid' ? 'Receipt' : 'Invoice';
-    const fileName = `${inv.invoiceNumber}_${docType}.pdf`;
-
     try {
+      setShareModal(null);
+      setIsGenerating(true);
+      
+      // Sync state to match the invoice being shared
+      const isReceipt = inv.status === 'paid';
+      setInvoiceData(inv);
+      setIsReceiptMode(isReceipt);
+      
+      const docType = isReceipt ? 'Receipt' : 'Invoice';
+      const docNum = isReceipt ? (inv.invoiceNumber || '').replace('INV-', 'RCPT-') : (inv.invoiceNumber || '');
+      const fileName = `${docNum}_${docType}.pdf`;
+
       // Use pure jsPDF - no html2canvas, works on Android WebView 100%
-      const pdfBlob = buildPDFBlob(inv, company, inv.status === 'paid');
+      const pdfBlob = buildPDFBlob(inv, company, isReceipt);
       setIsGenerating(false);
 
       // NATIVE APK SHARING (Capacitor)
-      if (Capacitor.isNativePlatform()) {
+      if (Capacitor.isNativePlatform() && Share.share) {
         const reader = new FileReader();
         reader.readAsDataURL(pdfBlob);
         reader.onloadend = async () => {
@@ -244,11 +256,12 @@ export default function InvoiceGenerator({ company }) {
             });
             await Share.share({
               title: fileName,
-              text: `Hello ${inv.clientName || ''}, please find your ${docType} attached.`,
+              text: shareMessage,
               url: fileResult.uri,
             });
           } catch (e) {
             console.error('Native share error', e);
+            // On APK fallback: force download
             const url = URL.createObjectURL(pdfBlob);
             const a = document.createElement('a');
             a.href = url; a.download = fileName; a.click();
@@ -261,24 +274,26 @@ export default function InvoiceGenerator({ company }) {
       // WEB: Try Web Share API with file attachment
       const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: fileName, text: `Hello ${inv.clientName || ''}, please find your ${docType} attached.` });
+        await navigator.share({ 
+          files: [file], 
+          title: fileName, 
+          text: shareMessage 
+        });
         return;
       }
 
-      // FALLBACK: Force download (desktop Chrome on HTTP)
+      // FALLBACK: Force download (desktop Chrome or non-HTTPS)
       const blobUrl = URL.createObjectURL(pdfBlob);
       const link = document.createElement('a');
       link.href = blobUrl; link.download = fileName;
       document.body.appendChild(link); link.click();
       document.body.removeChild(link); URL.revokeObjectURL(blobUrl);
-      alert(`✅ "${fileName}" has been downloaded!\n\nAttach it manually when you share via WhatsApp or Email.`);
+      alert(`✅ "${fileName}" has been downloaded!\n\nYou can now manually attach it when sharing.`);
 
     } catch (err) {
       setIsGenerating(false);
-      if (err.name !== 'AbortError') {
-        console.error('PDF Share failed:', err);
-        alert('Could not generate the PDF: ' + err.message);
-      }
+      console.error('PDF Share failed:', err);
+      alert('Could not generate the PDF: ' + (err.message || 'Unknown error'));
     }
   };
 
