@@ -111,6 +111,8 @@ export default function InvoiceGenerator({ company }) {
   const [summaryPeriod, setSummaryPeriod] = useState('all'); // 'all', 'week', 'month', 'year'
   const [isReceiptMode, setIsReceiptMode] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [shareModal, setShareModal] = useState(null); // null or invoice object
+  const [shareMessage, setShareMessage] = useState('');
   const [scale, setScale] = useState(1);
   const wrapperRef = useRef(null);
   const previewRef = useRef(null);
@@ -205,7 +207,15 @@ export default function InvoiceGenerator({ company }) {
     window.location.href = mailtoLink;
   };
 
-  const handleShareUniversal = async (inv) => {
+  const handleShareUniversal = (inv) => {
+    const docType = inv.status === 'paid' ? 'Receipt' : 'Invoice';
+    const defaultMsg = `Hello ${inv.clientName || 'there'},\n\nPlease find your ${docType} (${inv.invoiceNumber}) attached.\n\nAmount: Ksh ${(inv.total || 0).toFixed(2)}\nDue Date: ${inv.dueDate || ''}\n\nThank you for your business!\n\n— ${company.name}`;
+    setShareMessage(defaultMsg);
+    setShareModal(inv);
+  };
+
+  const executeShare = async (inv) => {
+    setShareModal(null);
     setIsGenerating(true);
     
     // Sync state to match the invoice being shared
@@ -826,6 +836,62 @@ export default function InvoiceGenerator({ company }) {
       <div style={{ position: 'fixed', top: 0, left: 0, width: '794px', opacity: 0, pointerEvents: 'none', zIndex: -1, overflow: 'hidden' }}>
         {renderInvoiceSheet(pdfRef, 1)}
       </div>
+
+      {/* Share Message Modal */}
+      {shareModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+          backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 9998, display: 'flex',
+          alignItems: 'flex-end', justifyContent: 'center', padding: '1rem'
+        }} onClick={() => setShareModal(null)}>
+          <div style={{
+            background: 'var(--panel-bg)', backdropFilter: 'blur(20px)',
+            borderRadius: '20px 20px 0 0', padding: '1.5rem', width: '100%',
+            maxWidth: '600px', border: '1px solid var(--panel-border)'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1rem' }}>📤 Share Message</h3>
+              <button onClick={() => setShareModal(null)} style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer', color: 'var(--text-secondary)' }}>×</button>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>Edit your message before sharing. It will be copied to your clipboard automatically.</p>
+            <textarea
+              value={shareMessage}
+              onChange={e => setShareMessage(e.target.value)}
+              rows={7}
+              style={{
+                width: '100%', padding: '0.75rem', borderRadius: '10px',
+                border: '1px solid var(--panel-border)', background: 'rgba(0,0,0,0.2)',
+                color: 'var(--text-primary)', fontSize: '0.9rem', resize: 'vertical',
+                fontFamily: 'var(--font-family)', lineHeight: 1.5
+              }}
+            />
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+              <button
+                className="btn btn-secondary"
+                style={{ flex: 1 }}
+                onClick={() => {
+                  navigator.clipboard?.writeText(shareMessage);
+                  setShareModal(null);
+                  alert('✅ Message copied to clipboard!');
+                }}
+              >
+                Copy Only
+              </button>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 2 }}
+                onClick={() => {
+                  navigator.clipboard?.writeText(shareMessage);
+                  executeShare(shareModal);
+                }}
+              >
+                <Share2 size={16} style={{ marginRight: '0.4rem' }} />
+                Copy & Share PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Loading Overlay */}
       {isGenerating && (
