@@ -816,10 +816,20 @@ export default function InvoiceGenerator({ company }) {
           <textarea rows="2" value={invoiceData.notes} onChange={e => setInvoiceData({...invoiceData, notes: e.target.value})}></textarea>
         </div>
         
-        <button className="btn btn-primary w-full mt-8" onClick={handleGeneratePDF} style={{ padding: '1rem', fontSize: '1.1rem' }}>
-          {isReceiptMode ? <Receipt size={20} style={{ marginRight: '0.5rem' }} /> : <Download size={20} style={{ marginRight: '0.5rem' }} />}
-          {isReceiptMode ? 'Generate Official Receipt' : 'Generate PDF Invoice'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '2rem' }}>
+          <button className="btn btn-primary" onClick={handleGeneratePDF} style={{ flex: 2, padding: '1rem', fontSize: '1rem' }}>
+            {isReceiptMode ? <Receipt size={18} style={{ marginRight: '0.5rem' }} /> : <Download size={18} style={{ marginRight: '0.5rem' }} />}
+            {isReceiptMode ? 'Download Receipt' : 'Download Invoice'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            style={{ flex: 1, padding: '1rem' }}
+            onClick={() => handleShareUniversal({ ...invoiceData, total: calculateSubtotal(), status: isReceiptMode ? 'paid' : 'unpaid' })}
+          >
+            <Share2 size={18} style={{ marginRight: '0.5rem' }} />
+            Share
+          </button>
+        </div>
         {isReceiptMode && (
           <button className="btn btn-secondary w-full mt-2" onClick={() => setIsReceiptMode(false)}>
             Switch back to Invoice
